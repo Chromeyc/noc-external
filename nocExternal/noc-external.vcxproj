@@ -140,7 +140,7 @@
   <ItemGroup>
     <ClCompile Include="features\aimbot.cpp" />
     <ClCompile Include="features\config.cpp" />
-    <ClCompile Include="features\drawing.cpp" />
+
     <ClCompile Include="features\esp.cpp" />
     <ClCompile Include="features\menu.cpp" />
     <ClCompile Include="features\misc.cpp" />

@@ -2,9 +2,11 @@
 #include "../imgui/imgui.h"
 #include "../imgui/imgui_impl_win32.h"
 #include "../imgui/imgui_impl_dx11.h"
+#include <dwmapi.h>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -35,14 +37,21 @@ void Overlay::CreateOverlayWindow()
     RegisterClassEx(&wc);
     
     window_handle = CreateWindowEx(
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED,
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
         "nocExternal", "noc-external",
         WS_POPUP,
         0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
     
-    SetLayeredWindowAttributes(window_handle, RGB(0, 0, 0), 0, LWA_COLORKEY);
+    // SAFE TRANSPARENCY METHOD
+    // Making the black color (0,0,0) transparent. This is the most compatible way to prevent black screens.
+    SetLayeredWindowAttributes(window_handle, RGB(0, 0, 0), 255, LWA_COLORKEY);
+    
+    // Extend for modern DWM compatibility
+    MARGINS margins = { -1 };
+    DwmExtendFrameIntoClientArea(window_handle, &margins);
+    
     ShowWindow(window_handle, SW_SHOW);
     UpdateWindow(window_handle);
 }
@@ -50,43 +59,23 @@ void Overlay::CreateOverlayWindow()
 void Overlay::InitializeDirectX()
 {
     DXGI_SWAP_CHAIN_DESC scd = {};
-    scd.BufferCount = 1;
+    scd.BufferCount = 1; // Legacy model for maximum compatibility (prevents black screen)
     scd.BufferDesc.Width = GetSystemMetrics(SM_CXSCREEN);
     scd.BufferDesc.Height = GetSystemMetrics(SM_CYSCREEN);
     scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    scd.BufferDesc.RefreshRate.Numerator = 0;
+    scd.BufferDesc.RefreshRate.Numerator = 0; // Auto
     scd.BufferDesc.RefreshRate.Denominator = 1;
     scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     scd.OutputWindow = window_handle;
     scd.SampleDesc.Count = 1;
     scd.SampleDesc.Quality = 0;
     scd.Windowed = TRUE;
-    scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD; // Discard is safer for transparency-keyed windows
     scd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
     
     D3D_FEATURE_LEVEL featureLevel;
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,  D3D11_CREATE_DEVICE_SINGLETHREADED, NULL, 0, D3D11_SDK_VERSION, &scd,  &swapchain, &device,  &featureLevel,  &context);
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &scd, &swapchain, &device, &featureLevel, &context);
 
-    IDXGIDevice* dxgiDevice = nullptr;
-    device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgiDevice);
-    if (dxgiDevice)
-    {
-        IDXGIAdapter* dxgiAdapter = nullptr;
-        dxgiDevice->GetAdapter(&dxgiAdapter);
-        if (dxgiAdapter)
-        {
-            IDXGIFactory* dxgiFactory = nullptr;
-            dxgiAdapter->GetParent(__uuidof(IDXGIFactory), (void**)&dxgiFactory);
-            if (dxgiFactory)
-            {
-                dxgiFactory->MakeWindowAssociation(window_handle, DXGI_MWA_NO_ALT_ENTER);
-                dxgiFactory->Release();
-            }
-            dxgiAdapter->Release();
-        }
-        dxgiDevice->Release();
-    }
-    
     ID3D11Texture2D* back_buffer;
     swapchain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
     device->CreateRenderTargetView(back_buffer, NULL, &render_target_view);
@@ -99,24 +88,14 @@ void Overlay::InitializeImGui()
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     
-
-    io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
-    
-
-    io.WantCaptureMouse = true;
-    io.WantCaptureKeyboard = true;
-    
-
-    io.MouseDrawCursor = false;
+    ImGui::StyleColorsDark();
     
     ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 6.0f;
+    style.FrameRounding = 4.0f;
     style.AntiAliasedLines = true;
-    style.AntiAliasedLinesUseTex = true;
     style.AntiAliasedFill = true;
-    style.CurveTessellationTol = 0.5f;
-    style.CircleTessellationMaxError = 0.1f;
-    
-    ImGui::StyleColorsDark();
+
     ImGui_ImplWin32_Init(window_handle);
     ImGui_ImplDX11_Init(device, context);
 }
@@ -128,30 +107,23 @@ void Overlay::BeginFrame()
     ImGui::NewFrame();
     
     context->OMSetRenderTargets(1, &render_target_view, NULL);
+    // Clear to perfect black. Because of LWA_COLORKEY, this black will become transparent.
+    static const float clear_color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    context->ClearRenderTargetView(render_target_view, clear_color);
 }
 
 void Overlay::EndFrame()
 {
-    DrawWatermark();
-    
     ImGui::Render();
-    
-    static const float clear_color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    context->ClearRenderTargetView(render_target_view, clear_color);
-    
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     
-    HRESULT hr = swapchain->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
+    // Present with VSync off (0) for minimum input latency.
+    swapchain->Present(0, 0); 
 }
 
 void Overlay::DrawText(Vector2 position, const char* text, unsigned int color)
 {
     ImGui::GetForegroundDrawList()->AddText(ImVec2(position.x, position.y), color, text);
-}
-
-void Overlay::DrawWatermark()
-{
-
 }
 
 void Overlay::SetClickThrough(bool click_through)
@@ -168,18 +140,6 @@ void Overlay::SetClickThrough(bool click_through)
         ex_style &= ~WS_EX_TRANSPARENT;
     }
     SetWindowLongPtr(window_handle, GWL_EXSTYLE, ex_style);
-    
-  
-    SetWindowPos(window_handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
-    
-    if (!click_through)
-    {
- 
-        SetForegroundWindow(window_handle);
-        BringWindowToTop(window_handle);
-        SetFocus(window_handle);
-        SetActiveWindow(window_handle);
-    }
 }
 
 bool Overlay::ShouldExit()
@@ -201,7 +161,6 @@ bool Overlay::IsRunning()
 
 LRESULT CALLBACK Overlay::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam))
         return true;
     
@@ -209,19 +168,6 @@ LRESULT CALLBACK Overlay::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
-        case WM_MOUSEMOVE:
-        case WM_LBUTTONDOWN:
-        case WM_LBUTTONUP:
-        case WM_RBUTTONDOWN:
-        case WM_RBUTTONUP:
-        case WM_MBUTTONDOWN:
-        case WM_MBUTTONUP:
-        case WM_MOUSEWHEEL:
-        case WM_KEYDOWN:
-        case WM_KEYUP:
-        case WM_CHAR:
-            
-            return DefWindowProc(hwnd, msg, wparam, lparam);
     }
     
     return DefWindowProc(hwnd, msg, wparam, lparam);
@@ -239,4 +185,4 @@ void Overlay::Cleanup()
     if (device) device->Release();
     
     if (window_handle) DestroyWindow(window_handle);
-} 
+}

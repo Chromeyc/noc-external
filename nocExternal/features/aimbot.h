@@ -36,9 +36,8 @@ public:
 
     AimbotSettings settings;
 
+    bool currentTargetFound = false;
+    uintptr_t lockedTargetAddress = 0;
 private:
-    Player* GetBestTarget(ActorLoopClass* actorLoop);
     void MoveMouse(const Vector2D& screenPos);
-    
-    Player* currentTarget = nullptr;
 };

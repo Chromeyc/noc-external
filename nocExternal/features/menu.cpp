@@ -213,13 +213,6 @@ void ActorLoopClass::RenderMenu()
                     
                 ImGui::Spacing();
                 
-                ImGui::Checkbox("Gravity", &misc.settings.enableGravity);
-
-                if (misc.settings.enableGravity)
-                    ImGui::SliderFloat("Gravity##GravityValue", &misc.settings.gravity, 0.0f, 200.0f, "%.1f");
-                    
-                ImGui::Spacing();
-                
                 ImGui::Checkbox("Jump Power", &misc.settings.enableJumpPower);
                 if (misc.settings.enableJumpPower)
                     ImGui::SliderFloat("Power##JumpValue", &misc.settings.jumpPower, 0.0f, 200.0f, "%.1f");

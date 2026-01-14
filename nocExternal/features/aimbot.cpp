@@ -5,94 +5,94 @@
 #include <cmath>
 #include <algorithm>
 
-Aimbot::Aimbot() {
-}
-
-Player* Aimbot::GetBestTarget(ActorLoopClass* actorLoop) {
-    auto players = actorLoop->GetPlayers();
-    if (players.empty()) return nullptr;
-
-    Vector3 cameraPos = actorLoop->GetCameraPosition();
-    
-    Player* bestTarget = nullptr;
-    float bestScore = FLT_MAX;
-
-    Matrix4x4 viewMatrix = actorLoop->GetViewMatrix();
-    Vector2D screenCenter = { ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f };
-
-    for (auto& player : players) {
-        if (!player.valid || player.address == actorLoop->GetLocalPlayer()) continue;
-        if (!settings.aimAtTeam && player.isTeammate) continue;
-
-        float distance = actorLoop->GetDistance(cameraPos, player.position);
-        if (distance > settings.maxDistance) continue;
-        
-        Vector3 aimPos = player.position;
-        if (settings.aimAtHead) aimPos.y += player.size.y * 0.5f; 
-        
-        Vector2D screenPos;
-        if (!actorLoop->WorldToScreen(aimPos, screenPos, viewMatrix)) continue;
-
-        float distToCrosshair = sqrt(pow(screenPos.x - screenCenter.x, 2) + pow(screenPos.y - screenCenter.y, 2));
-        
-        if (distToCrosshair > settings.fov) continue;
-        
-        if (distToCrosshair < bestScore) {
-            bestScore = distToCrosshair;
-            bestTarget = &player;
-        }
-    }
-    
-    return bestTarget;
-}
+Aimbot::Aimbot() : currentTargetFound(false), lockedTargetAddress(0) {}
 
 void Aimbot::MoveMouse(const Vector2D& targetPos) {
-    ImVec2 screenSize = ImGui::GetIO().DisplaySize;
-    float centerX = screenSize.x * 0.5f;
-    float centerY = screenSize.y * 0.5f;
+    float screenW = (float)GetSystemMetrics(SM_CXSCREEN);
+    float screenH = (float)GetSystemMetrics(SM_CYSCREEN);
+    
+    float centerX = screenW * 0.5f;
+    float centerY = screenH * 0.5f;
     
     float dx = targetPos.x - centerX;
     float dy = targetPos.y - centerY;
 
+    float final_dx = 0;
+    float final_dy = 0;
+
     if (settings.smoothAim) {
         float smooth = settings.smoothness;
-        if (smooth < 1.5f) smooth = 1.5f; 
+        if (smooth < 1.0f) smooth = 1.0f;
         
-        dx /= smooth;
-        dy /= smooth;
+        final_dx = dx / smooth;
+        final_dy = dy / smooth;
+
+        if (std::abs(final_dx) < 0.5f && std::abs(dx) > 0.0f) final_dx = (dx > 0) ? 1.0f : -1.0f;
+        if (std::abs(final_dy) < 0.5f && std::abs(dy) > 0.0f) final_dy = (dy > 0) ? 1.0f : -1.0f;
+        
+        if (std::abs(dx) < 2.0f && std::abs(dy) < 2.0f) return;
+    } else {
+        final_dx = dx;
+        final_dy = dy;
     }
-    
-    if (std::abs(dx) < 2.0f && std::abs(dy) < 2.0f) return;
-    
+
     INPUT input = { 0 };
     input.type = INPUT_MOUSE;
     input.mi.dwFlags = MOUSEEVENTF_MOVE;
-    input.mi.dx = (LONG)dx;
-    input.mi.dy = (LONG)dy;
+    input.mi.dx = (LONG)final_dx;
+    input.mi.dy = (LONG)final_dy;
     SendInput(1, &input, sizeof(INPUT));
 }
 
 void Aimbot::Update(ActorLoopClass* actorLoop) {
-    if (!settings.enableAimbot) return;
+    if (!settings.enableAimbot) {
+        lockedTargetAddress = 0;
+        currentTargetFound = false;
+        return;
+    }
     
     if ((GetAsyncKeyState(settings.aimKey) & 0x8000) == 0) {
-        currentTarget = nullptr;
+        lockedTargetAddress = 0;
+        currentTargetFound = false;
         return;
     }
 
-    Player* target = GetBestTarget(actorLoop);
-    if (!target) return;
-    
-    Vector3 aimPoint = target->position;
-    
-    if (settings.aimAtHead) {
-        aimPoint.y += target->size.y * 0.5f; 
-    } else if (settings.aimAtBody) {
+    Player target;
+    bool targetValid = false;
+
+    // 1. Sticky Target: Check if we are already locked onto someone
+    if (lockedTargetAddress != 0) {
+        const auto& players = actorLoop->GetPlayers();
+        for (const auto& p : players) {
+            if (p.address == lockedTargetAddress && p.health > 0) {
+                target = p;
+                targetValid = true;
+                break;
+            }
+        }
+        
+        // If they died or left, clear the lock so we can find a new one
+        if (!targetValid) lockedTargetAddress = 0;
     }
 
+    // 2. Initial Target: If no one is locked, find the best one in FOV
+    if (lockedTargetAddress == 0) {
+        if (actorLoop->GetBestTargetPlayer(target)) {
+            lockedTargetAddress = target.address;
+            targetValid = true;
+        }
+    }
+
+    currentTargetFound = targetValid;
+    if (!targetValid) return;
+    
+    Vector3 aimPoint = target.position;
+    if (settings.aimAtHead) {
+        aimPoint.y += 2.2f;
+    } 
+
     Vector2D screenTarget;
-    Matrix4x4 viewMatrix = actorLoop->GetViewMatrix();
-    if (actorLoop->WorldToScreen(aimPoint, screenTarget, viewMatrix)) {
+    if (actorLoop->WorldToScreen(aimPoint, screenTarget, actorLoop->GetCachedViewMatrix())) {
         MoveMouse(screenTarget);
     }
 }

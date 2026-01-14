@@ -9,13 +9,13 @@
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "winmm.lib")
-#pragma warning(disable: 4995)
 
 std::unique_ptr<ActorLoopClass> ActorLoop = std::make_unique<ActorLoopClass>();
 std::unique_ptr<Overlay> OverlayInstance = std::make_unique<Overlay>();
 
 int main()
 {
+    timeBeginPeriod(1);
     SetConsoleTitleA("noc-external");
 
     std::cout << R"(
@@ -58,14 +58,19 @@ int main()
         return 1;
     }
     
-
     OverlayInstance->SetClickThrough(true);
+    
+    // Set process priority to a lower level to ensure it doesn't starve the game or other background processes.
+    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     
     static bool menu_was_visible = false;
 
     while (OverlayInstance->IsRunning())
     {
         OverlayInstance->BeginFrame();
+        
+        // Single data gathering step to prevent lag
+        ActorLoop->Tick();
         
         ActorLoop->RenderMenu();
         
@@ -75,7 +80,6 @@ int main()
             OverlayInstance->SetClickThrough(!menu_visible);
             menu_was_visible = menu_visible;
             
- 
             if (menu_visible)
             {
                 HWND hwnd = OverlayInstance->GetWindowHandle();
@@ -89,12 +93,15 @@ int main()
         }
         
         ActorLoop->UpdateAimbot();
-        
         ActorLoop->UpdateMisc();
-        
         ActorLoop->Render(OverlayInstance.get());
+        
         OverlayInstance->EndFrame();
+        
+        // Balanced sleep: 15ms (~66 FPS) is perfect for an external without causing lag.
+        Sleep(15);
     }
-
+    
+    timeEndPeriod(1);
     return 0;
-} 
+}

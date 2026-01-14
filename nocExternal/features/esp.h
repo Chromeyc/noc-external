@@ -1,27 +1,33 @@
 #pragma once
-#include "aimbot.h"
-#include "misc.h"
-#include "../sdk/memory.h"
-#include "../sdk/sdk.h"
+#ifndef ACTOR_LOOP_HEADER
+#define ACTOR_LOOP_HEADER
+
+#include <windows.h>
 #include <vector>
 #include <string>
 #include <memory>
 #include <chrono>
+#include <unordered_map>
+#include "../imgui/imgui.h"
+#include "../sdk/memory.h"
+#include "../sdk/sdk.h"
+#include "aimbot.h"
+#include "misc.h"
 
+// Forward declaration of Overlay
 class Overlay;
-struct ImDrawList;
-struct ImVec2;
-typedef unsigned int ImU32;
 
 struct Player {
-    uintptr_t address;
-    std::string name;
-    Vector3 position;
-    Vector3 size;
-    bool valid;
-    bool isTeammate;
-    uintptr_t teamAddress;
-    uintptr_t characterAddress;
+    uintptr_t address = 0;
+    std::string name = "";
+    Vector3 position = { 0, 0, 0 };
+    Vector3 size = { 0, 0, 0 };
+    bool valid = false;
+    bool isTeammate = false;
+    uintptr_t teamAddress = 0;
+    uintptr_t characterAddress = 0;
+    float health = 0.0f;
+    float maxHealth = 0.0f;
 };
 
 struct ESPSettings {
@@ -30,9 +36,7 @@ struct ESPSettings {
     bool enableName = true;
     bool enableDistance = true;
     bool showTeam = true;
-    
     float maxDistance = 1000.0f;
-    
     float enemyBoxColor[4] = { 0.0f, 0.831f, 1.0f, 1.0f };
     float enemyNameColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     float enemySnaplineColor[4] = { 0.0f, 0.831f, 1.0f, 1.0f };
@@ -48,30 +52,28 @@ struct ESPSettings {
     bool enableHealthBar = false;
     bool enableBoxOutline = false;
     bool enableCornerBox = false;
-    bool showOnlyVisible = false;
     float boxOutlineThickness = 1.0f;
     float nameSize = 1.0f;
-    
     bool enableSkeleton = false;
     float skeletonThickness = 1.5f;
     float enemySkeletonColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     float teamSkeletonColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
 };
 
-
-
 class ActorLoopClass
 {
 public:
     ActorLoopClass();
+    ~ActorLoopClass() = default;
+
     bool Initialize();
-   
-    void Render();                  
+    void Tick(); 
+    void Render();
     void Render(Overlay* overlay);
     void RenderMenu();
 
-    std::vector<Player> GetPlayers();
-    Matrix4x4 GetViewMatrix();
+    const std::vector<Player>& GetPlayers();
+    const Matrix4x4& GetCachedViewMatrix();
 
     bool WorldToScreen(const Vector3& world_pos, Vector2D& screen_pos, const Matrix4x4& view_matrix);
     
@@ -81,45 +83,65 @@ public:
     
     void UpdateAimbot();
     void UpdateMisc();
-    Player* GetBestTarget();
+    bool GetBestTargetPlayer(Player& out_player); 
     float GetDistance(const Vector3& pos1, const Vector3& pos2);
     float GetFOV(const Vector3& target_pos);
     Vector3 CalculateAngle(const Vector3& from, const Vector3& to);
-    Vector3 SmoothAngle(const Vector3& current, const Vector3& target, float smoothness);
     
     uintptr_t GetLocalHumanoid();
     uintptr_t GetWorkspace();
+    uintptr_t GetDataModel();
     uintptr_t GetLocalPlayerTeam();
-    bool IsTeammate(uintptr_t player_address, uintptr_t local_team_address);
     
+    // Feature components
     ESPSettings settings;
-    
     Aimbot aimbot;
     Misc misc;
-    
+
+    // Friendship for component access
     friend class Aimbot;
     friend class Misc;
+
+    // State helpers
     bool IsMenuVisible() const { return showMenu; }
-    
     uintptr_t GetLocalPlayer() const { return local_player; }
     
+    // UI Helpers
+    void ApplyTheme(int theme);
     int currentTheme = 0;
     int menuToggleKey = VK_INSERT;
-    void ApplyTheme(int theme);
 
-private:
-    std::unique_ptr<Memory> memory;
-    uintptr_t game_base;
-    uintptr_t local_player;
-    bool showMenu = false;
-
+    // Drawing Logic (Public)
     void DrawCornerBox(ImDrawList* draw_list, float min_x, float min_y, float max_x, float max_y, ImU32 color, float thickness);
     void DrawBox(ImDrawList* draw_list, float min_x, float min_y, float max_x, float max_y, ImU32 color, float thickness);
     void DrawSnapline(ImDrawList* draw_list, float x, float y, ImU32 color, float thickness, int type);
     void DrawSkeleton(ImDrawList* draw_list, uintptr_t character, ImU32 color, float thickness);
     Vector3 GetBonePosition(uintptr_t character, const std::string& bone_name);
     void DrawFOVCircle(ImDrawList* draw_list, float fov, ImU32 color);
-    
+
+    // Core Data (Public for ease of use in features)
+    std::unique_ptr<Memory> memory;
+    uintptr_t game_base = 0;
+    uintptr_t local_player = 0;
+    bool showMenu = false;
+
+    // Performance Caching
+    Matrix4x4 cached_view_matrix;
+    Vector3 cached_camera_pos = {0,0,0};
+    std::vector<Player> cached_players;
+
+    // Bone Caching
+    std::unordered_map<uintptr_t, std::unordered_map<std::string, uintptr_t>> bone_cache;
+    std::unordered_map<uintptr_t, std::chrono::high_resolution_clock::time_point> bone_cache_time;
+    std::unordered_map<uintptr_t, std::unordered_map<std::string, Vector3>> bone_pos_cache;
+
+    // Core Caching
+    uintptr_t cached_datamodel = 0;
+    uintptr_t cached_workspace = 0;
+    std::chrono::high_resolution_clock::time_point last_core_refresh;
+
+private:
+    // Internal Utilities
     std::string ReadString(uintptr_t address);
     std::string LengthReadString(uintptr_t string);
     std::string GetInstanceName(uintptr_t instance_address);
@@ -129,4 +151,7 @@ private:
     uintptr_t FindFirstChildByClass(uintptr_t instance_address, const std::string& class_name);
 };
 
+// Singleton pattern handled in main.cpp, accessed via extern here
 extern std::unique_ptr<ActorLoopClass> ActorLoop;
+
+#endif // ACTOR_LOOP_HEADER
